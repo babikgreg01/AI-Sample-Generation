@@ -34,23 +34,22 @@ def re_pad_spectrogram(spectrogram):
     return spectrogram
 
 
-def generate_spectrogram(wav_file_path, n_fft, hop_length, plot=False):
+def generate_spectrogram(audio, n_fft, hop_length, plot=False):
     # Load the audio file
-    y, sr = librosa.load(wav_file_path, sr=None)
-
+    
     # Generate a spectrogram
-    D = librosa.amplitude_to_db(np.abs(librosa.stft(y, n_fft=n_fft, win_length=n_fft, hop_length=hop_length)), ref=np.max)
+    D = librosa.amplitude_to_db(np.abs(librosa.stft(audio, n_fft=n_fft, win_length=n_fft, hop_length=hop_length)), ref=np.max)
 
     # Display the spectrogram
     if(plot):
         plt.figure(figsize=(8, 4))
         librosa.display.specshow(D, sr=sr, x_axis='time', y_axis='log')
         plt.colorbar(format='%+2.0f dB')
-        plt.title('Spectrogram of {}'.format(os.path.basename(wav_file_path)))
+        #plt.title('Spectrogram of {}'.format(os.path.basename(wav_file_path)))
         plt.show()
         print("dimension: ", np.shape(D)[0], " * ", np.shape(D)[1])
 
-    return D, sr
+    return D
 
 
 def spectrogram_to_waveform(spectrogram, n_fft, hop_length):
@@ -80,9 +79,20 @@ def apply_fadeout(audio, sr, duration=0.1):
     return audio
 
 
+def pitch_shift(audio, semitones, sample_rate):
+    # shift the pitch through resampling
+    new_sample_rate = int(sample_rate * (2.0 ** (semitones/12)))
+    repitched_audio = librosa.resample(audio, orig_sr=new_sample_rate, target_sr=sample_rate)
+
+    return repitched_audio
+
+
 def preprocess_data(raw_data_path, processed_data_path, params):
 
-    destination_subfolder_name = "nfft"+str(params["n_fft"])+"_hop"+str(params["hop_length"])+"_nframes"+str(params["n_frames"])
+    destination_subfolder_name = "nfft"+str(params["n_fft"])+"_hop"+str(params["hop_length"])+"_nframes"+str(params["n_frames"]) + "_sr"+str(params["sample_rate"])
+    if(params["data_augmentation"]):
+        destination_subfolder_name += "data_augmented"
+        
     destination_subfolder = os.path.join(processed_data_path, destination_subfolder_name)
 
     print("saving to ", destination_subfolder)
@@ -108,13 +118,32 @@ def preprocess_data(raw_data_path, processed_data_path, params):
                 wav_path = os.path.join(source_file_path, file_name)
                 npy_path = os.path.join(destination_file_path, os.path.splitext(file_name)[0])
 
+                # load audio file
+                audio, sr = librosa.load(wav_path, sr=params["sample_rate"])
+
                 # generate spectrogram, pad and scale to range [0,1]
-                spectrogram, _ = generate_spectrogram(wav_path, n_fft=params["n_fft"], hop_length=params["hop_length"])
+                spectrogram = generate_spectrogram(audio, n_fft=params["n_fft"], hop_length=params["hop_length"])
                 spectrogram = pad_spectrogram(spectrogram, num_frames=params["n_frames"], n_fft=params["n_fft"])
                 spectrogram = scale_spectrogram(spectrogram)
 
                 # save spectrogram
                 np.save(npy_path, spectrogram)
+
+
+                if(params["data_augmentation"]):
+                    pitched_down_audio = pitch_shift(audio, -2, sr)
+                    spectrogram = generate_spectrogram(pitched_down_audio, n_fft=params["n_fft"], hop_length=params["hop_length"])
+                    spectrogram = pad_spectrogram(spectrogram, num_frames=params["n_frames"], n_fft=params["n_fft"])
+                    spectrogram = scale_spectrogram(spectrogram)
+                    np.save(npy_path+"_down2", spectrogram)
+
+                    pitched_up_audio = pitch_shift(audio, 2, sr)
+                    spectrogram = generate_spectrogram(pitched_up_audio, n_fft=params["n_fft"], hop_length=params["hop_length"])
+                    spectrogram = pad_spectrogram(spectrogram, num_frames=params["n_frames"], n_fft=params["n_fft"])
+                    spectrogram = scale_spectrogram(spectrogram)
+                    np.save(npy_path+"_up2", spectrogram)
+
+                
 
 
 if __name__ == "__main__":
@@ -136,6 +165,7 @@ if __name__ == "__main__":
     "hop_length":1024,
     "sample_rate":44100,
     "n_frames": 16,
+    "data_augmentation": True
     }
 
     preprocess_data(raw_data_path, processed_data_path, params)
