@@ -18,8 +18,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import sys
+from functools import partial
+import sounddevice as sd
 
-sys.path.append("../scripts")
+
+#sys.path.append("../scripts")
+import audio_utils as au
 from utils import NpyDataset
 from model import CVAE
 from model import to_var
@@ -71,7 +75,7 @@ def load_model():
     return vae
 
 
-def plot_latent_space(latent_points, category_labels, categories):
+def plot_latent_space(latent_points, category_labels, categories, params):
     fig, ax = plt.subplots()
 
     x = latent_points[:, 0]  # Array of x coordinates
@@ -95,20 +99,41 @@ def plot_latent_space(latent_points, category_labels, categories):
 
 
     # Connect the event handler
-    fig.canvas.mpl_connect('button_press_event', onclick)
+    onclick_with_params = partial(onclick, params=params)
+    fig.canvas.mpl_connect('button_press_event', onclick_with_params)
 
     plt.show()
 
 
 # Event handler 
-def onclick(event):
+def onclick(event, params):
     # Check if click is within axes
     if event.xdata is None or event.ydata is None:  
         return
 
     print(f'Clicked at: x={event.xdata}, y={event.ydata}')
+    
+    #sample = Variable(torch.randn(num_samples, 2)).cuda()
+
+    sample = Variable(torch.tensor([[event.xdata, event.ydata]], dtype=torch.float32)).cuda()
+    spectrogram = vae.decode(sample) # decode sample into spectrogram
+    print("reconstruction shape:", spectrogram.shape)
 
 
+    spectrogram = spectrogram.detach().cpu().numpy() # convert to numpy array
+    spectrogram = np.squeeze(spectrogram)
+
+    spectrogram = au.re_scale_spectrogram(spectrogram)
+    spectrogram = au.re_pad_spectrogram(spectrogram)
+
+    reconstructed_waveform = au.spectrogram_to_waveform(spectrogram, params["n_fft"], params["hop_length"])
+    reconstructed_waveform = au.apply_fadeout(reconstructed_waveform, params["sample_rate"])
+    print("shape of waveform:", np.shape(reconstructed_waveform))
+
+
+    sd.play(reconstructed_waveform, blocking=True)
+    #recon_x = recon_x.detach().cpu().numpy()
+    #print(recon_x.shape)
 
 
 def define_categories(processed_data_path):
@@ -139,10 +164,20 @@ def define_categories(processed_data_path):
 
 
 
+
+
 if __name__ == "__main__":
+    sd.default.samplerate = 44100
     base_dir = os.getcwd()
     data_folder = "nfft4096_hop1024_nframes16_sr44100data_augmented"
     processed_data_path = os.path.join(base_dir, 'data', 'training_processed', data_folder)
+
+    params = {
+    "n_fft":4096,
+    "hop_length":1024,
+    "sample_rate":44100,
+    "n_frames": 16
+    }
 
     #sorted(os.listdir(processed_data_path))
 
@@ -165,6 +200,6 @@ if __name__ == "__main__":
         category_labels[i] = category_lookup[latent_labels[i]]
     print(category_labels)
 
-    plot_latent_space(latent_points, category_labels, categories)
+    plot_latent_space(latent_points, category_labels, categories, params)
 
 
